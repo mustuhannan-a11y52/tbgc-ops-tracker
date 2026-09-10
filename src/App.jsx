@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
-import { Box, ClipboardList, Truck, History, CalendarDays, LogOut, Plus, Pencil, Trash2, X, Check, Download, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Box, ClipboardList, Truck, History, CalendarDays, LogOut, Plus, Pencil, Trash2, X, Check, Download, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle2, Layers, PackageCheck } from "lucide-react";
 
 const QUALITY_OPTIONS = ["New", "Good", "Fair", "Needs Repair", "Damaged"];
 const PROGRAM_STATUS = ["Planning", "Confirmed", "Completed", "Cancelled"];
@@ -150,6 +150,8 @@ export default function App() {
         <nav className="nav">
           <NavItem icon={CheckCircle2} label="Completed Programs" active={tab === "completed"} onClick={() => setTab("completed")} />
           <NavItem icon={Box} label="Inventory" active={tab === "inventory"} onClick={() => setTab("inventory")} />
+          <NavItem icon={Layers} label="Activities" active={tab === "activities"} onClick={() => setTab("activities")} />
+          <NavItem icon={PackageCheck} label="Returned Items" active={tab === "returned"} onClick={() => setTab("returned")} />
           <NavItem icon={ClipboardList} label="Programs" active={tab === "programs"} onClick={() => setTab("programs")} />
           <NavItem icon={Truck} label="Transit" active={tab === "transit"} badge={overdueCount || null} onClick={() => setTab("transit")} />
           <NavItem icon={History} label="Activity Log" active={tab === "log"} onClick={() => setTab("log")} />
@@ -172,6 +174,8 @@ export default function App() {
 
         {tab === "completed" && <CompletedProgramsTab programs={programs} />}
         {tab === "inventory" && <InventoryTab inventory={inventory} programs={programs} persist={persistInventory} pushLog={pushLog} user={user} />}
+        {tab === "activities" && <ActivitiesTab inventory={inventory} />}
+        {tab === "returned" && <ReturnedItemsTab transit={transit} inventory={inventory} persistTransit={persistTransit} persistInventory={persistInventory} pushLog={pushLog} user={user} />}
         {tab === "programs" && <ProgramsTab programs={programs} inventory={inventory} transit={transit} persist={persistPrograms} pushLog={pushLog} user={user} expandedId={expandedProgramId} setExpandedId={setExpandedProgramId} />}
         {tab === "transit" && <TransitTab transit={transit} programs={programs} inventory={inventory} persist={persistTransit} persistPrograms={persistPrograms} persistInventory={persistInventory} pushLog={pushLog} user={user} onViewProgram={(id) => { setExpandedProgramId(id); setTab("programs"); }} />}
         {tab === "log" && <LogTab logEntries={logEntries} />}
@@ -419,6 +423,14 @@ function ProgramsTab({ programs, inventory, transit, persist, pushLog, user, exp
                 </div>
                 {isOpen && (
                   <div className="prog-body">
+                    <div className="prog-sub-head" style={{ marginTop: 0 }}>Status</div>
+                    <select
+                      value={p.status}
+                      onChange={(e) => updateProgram(p.id, { status: e.target.value }, p.name + " status changed to " + e.target.value + " by " + user)}
+                      style={{ padding: "7px 10px", border: "1px solid var(--border)", borderRadius: 7 }}
+                    >
+                      {PROGRAM_STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
                     <div className="prog-sub-head">Materials</div>
                     {(p.materials || []).length === 0 ? (
                       <p className="td-muted" style={{ margin: "4px 0 12px" }}>No materials added yet.</p>
@@ -426,14 +438,17 @@ function ProgramsTab({ programs, inventory, transit, persist, pushLog, user, exp
                       <table className="table table-tight">
                         <thead><tr><th>Item</th><th>Required</th><th>Sent</th><th></th></tr></thead>
                         <tbody>
-                          {p.materials.map((m, idx) => (
-                            <tr key={idx}>
-                              <td>{m.name}</td>
-                              <td>{m.qtyRequired}</td>
-                              <td>{m.qtySent || 0}</td>
-                              <td className="td-actions"><button className="icon-btn" onClick={() => removeMaterial(p, idx)}><Trash2 size={13} /></button></td>
-                            </tr>
-                          ))}
+                          {p.materials.map((m, idx) => {
+                            const short = (m.qtySent || 0) < m.qtyRequired;
+                            return (
+                              <tr key={idx}>
+                                <td>{m.name}</td>
+                                <td>{m.qtyRequired}</td>
+                                <td style={short ? { color: "var(--warning)", fontWeight: 600 } : undefined}>{m.qtySent || 0}</td>
+                                <td className="td-actions"><button className="icon-btn" onClick={() => removeMaterial(p, idx)}><Trash2 size={13} /></button></td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     )}
@@ -451,9 +466,18 @@ function ProgramsTab({ programs, inventory, transit, persist, pushLog, user, exp
                       <p className="td-muted" style={{ margin: "4px 0" }}>No shipments logged for this program yet — add one from the Transit tab.</p>
                     ) : (
                       shipments.map((t) => (
-                        <div key={t.id} className="shipment-row">
-                          <span>To <strong>{t.facilitator}</strong>, packed by {t.packedBy}</span>
-                          <Pill text={transitStatus(t)} color={TRANSIT_STATUS_COLOR[transitStatus(t)]} />
+                        <div key={t.id} className="shipment-block">
+                          <div className="shipment-row">
+                            <span>To <strong>{t.facilitator}</strong>, packed by {t.packedBy}{t.packByDate ? " · pack by " + fmtDate(t.packByDate) : ""}</span>
+                            <Pill text={transitStatus(t)} color={TRANSIT_STATUS_COLOR[transitStatus(t)]} />
+                          </div>
+                          {(t.materials || []).length > 0 && (
+                            <div className="shipment-materials">
+                              {t.materials.map((m, idx) => (
+                                <span key={idx} className="shipment-chip">{m.name} × {m.qty}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
@@ -473,6 +497,142 @@ function ProgramsTab({ programs, inventory, transit, persist, pushLog, user, exp
               </div>
             );
           })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ---------- ACTIVITIES ---------- */
+function ActivitiesTab({ inventory }) {
+  const groups = {};
+  inventory.forEach((item) => {
+    const key = item.activity && item.activity.trim() ? item.activity.trim() : "Unassigned";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  });
+  const activityNames = Object.keys(groups).sort((a, b) => (a === "Unassigned" ? 1 : b === "Unassigned" ? -1 : a.localeCompare(b)));
+
+  return (
+    <section>
+      <div className="section-head">
+        <div>
+          <h2>Activities</h2>
+          <p className="section-sub">Inventory grouped by which activity it's used for.</p>
+        </div>
+      </div>
+      {inventory.length === 0 ? (
+        <EmptyState text="No inventory items yet." />
+      ) : (
+        <div className="card-list">
+          {activityNames.map((name) => (
+            <div key={name} className="prog-card">
+              <div className="prog-head" style={{ cursor: "default" }}>
+                <div>
+                  <div className="prog-name">{name}</div>
+                  <div className="prog-meta">{groups[name].length} item{groups[name].length !== 1 ? "s" : ""}</div>
+                </div>
+              </div>
+              <div className="prog-body">
+                <table className="table table-tight">
+                  <thead><tr><th>Item</th><th>Qty</th><th>Quality</th></tr></thead>
+                  <tbody>
+                    {groups[name].map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.name}</td>
+                        <td>{item.quantity}</td>
+                        <td><Pill text={item.quality} color={QUALITY_COLOR[item.quality] || "#6B7280"} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ---------- RETURNED ITEMS ---------- */
+function ReturnedItemsTab({ transit, inventory, persistTransit, persistInventory, pushLog, user }) {
+  const returned = [...transit].filter((t) => t.actualReturnDate).sort((a, b) => b.actualReturnDate.localeCompare(a.actualReturnDate));
+
+  async function updateQuality(shipment, idx, newQuality) {
+    if (!newQuality) return;
+    const material = shipment.materials[idx];
+    const oldQuality = material.returnedQuality;
+
+    const findRow = (list, quality, activity) => list.find((i) => i.name === material.name && i.activity === activity && i.quality === quality);
+    const baseItem = inventory.find((i) => i.id === material.inventoryId) || inventory.find((i) => i.name === material.name);
+    const activity = baseItem ? baseItem.activity : "";
+
+    let next = [...inventory];
+    // Move this shipment's quantity out of whichever line it's currently sitting in...
+    const oldRow = oldQuality ? findRow(next, oldQuality, activity) : null;
+    if (oldRow) {
+      next = next.map((i) => (i.id === oldRow.id ? { ...i, quantity: Math.max(0, i.quantity - material.qty) } : i));
+    }
+    // ...and into the line for the corrected quality, creating one if it doesn't exist yet.
+    const newRow = findRow(next, newQuality, activity);
+    if (newRow) {
+      next = next.map((i) => (i.id === newRow.id ? { ...i, quantity: i.quantity + material.qty } : i));
+    } else {
+      next = [...next, { id: genId(), name: material.name, activity, quantity: material.qty, quality: newQuality, notes: "Split from a returned batch", updatedAt: new Date().toISOString() }];
+    }
+    await persistInventory(next);
+
+    const nextTransit = transit.map((t) => {
+      if (t.id !== shipment.id) return t;
+      const materials = t.materials.map((m, i) => (i === idx ? { ...m, returnedQuality: newQuality } : m));
+      return { ...t, materials };
+    });
+    await persistTransit(nextTransit);
+    pushLog("Updated returned condition", material.name + " from " + shipment.programName + " set to " + newQuality + " by " + user);
+  }
+
+  return (
+    <section>
+      <div className="section-head">
+        <div>
+          <h2>Returned items</h2>
+          <p className="section-sub">Review or correct the condition logged when materials came back — updates the live inventory quality too.</p>
+        </div>
+      </div>
+      {returned.length === 0 ? (
+        <EmptyState text="Nothing has been marked returned yet." />
+      ) : (
+        <div className="card-list">
+          {returned.map((t) => (
+            <div key={t.id} className="prog-card">
+              <div className="prog-head" style={{ cursor: "default" }}>
+                <div>
+                  <div className="prog-name">{t.programName}</div>
+                  <div className="prog-meta">From {t.facilitator} · returned {fmtDate(t.actualReturnDate)}</div>
+                </div>
+              </div>
+              <div className="prog-body">
+                {(t.materials || []).length === 0 ? (
+                  <p className="td-muted">No materials were logged on this shipment.</p>
+                ) : (
+                  t.materials.map((m, idx) => (
+                    <div key={idx} className="check-row" style={{ justifyContent: "space-between" }}>
+                      <span>{m.name} · qty {m.qty}</span>
+                      <select
+                        className="return-quality-select"
+                        value={m.returnedQuality || ""}
+                        onChange={(e) => updateQuality(t, idx, e.target.value)}
+                      >
+                        <option value="">Select quality…</option>
+                        {QUALITY_OPTIONS.map((q) => <option key={q} value={q}>{q}</option>)}
+                      </select>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </section>
@@ -515,7 +675,7 @@ function CompletedProgramsTab({ programs }) {
                         <tr key={idx}>
                           <td>{m.name}</td>
                           <td>{m.qtyRequired}</td>
-                          <td>{m.qtySent || 0}</td>
+                          <td style={(m.qtySent || 0) < m.qtyRequired ? { color: "var(--warning)", fontWeight: 600 } : undefined}>{m.qtySent || 0}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -538,9 +698,10 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
   const [returningId, setReturningId] = useState(null);
   const [returnQuality, setReturnQuality] = useState({});
   const [expandedShipment, setExpandedShipment] = useState(null);
+  const [pendingDeleteShipment, setPendingDeleteShipment] = useState(null);
 
   function openNew() {
-    setForm({ programId: "", facilitator: "", packedBy: user, sentDate: today(), expectedReturnDate: "", actualReturnDate: "", notes: "" });
+    setForm({ programId: "", facilitator: "", packedBy: user, packByDate: "", sentDate: today(), expectedReturnDate: "", actualReturnDate: "", notes: "" });
     setChecked({});
     setSendQty({});
   }
@@ -556,18 +717,58 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
   }
 
   async function restoreInventoryWithQuality(materialsWithQuality) {
-    const next = inventory.map((i) => {
-      const m = materialsWithQuality.find((mm) => mm.inventoryId === i.id);
-      if (!m) return i;
-      return { ...i, quantity: i.quantity + m.qty, quality: m.returnedQuality || i.quality };
+    let next = [...inventory];
+    materialsWithQuality.forEach((m) => {
+      const baseItem = inventory.find((i) => i.id === m.inventoryId);
+      if (!baseItem || !m.returnedQuality) return;
+      if (m.returnedQuality === baseItem.quality) {
+        // Same condition as the rest of the stock — just add the quantity back.
+        next = next.map((i) => (i.id === baseItem.id ? { ...i, quantity: i.quantity + m.qty } : i));
+      } else {
+        // Different condition — route into (or start) a separate line for that
+        // quality, rather than relabeling the whole item's stock.
+        const splitRow = next.find((i) => i.name === baseItem.name && i.activity === baseItem.activity && i.quality === m.returnedQuality);
+        if (splitRow) {
+          next = next.map((i) => (i.id === splitRow.id ? { ...i, quantity: i.quantity + m.qty } : i));
+        } else {
+          next = [
+            ...next,
+            { id: genId(), name: baseItem.name, activity: baseItem.activity, quantity: m.qty, quality: m.returnedQuality, notes: "Split from a returned batch", updatedAt: new Date().toISOString() },
+          ];
+        }
+      }
     });
     await persistInventory(next);
   }
 
+  function sendValidationIssues() {
+    const issues = [];
+    const materials = selectedProgram?.materials || [];
+    if (materials.length === 0) return issues;
+    const anyChecked = Object.values(checked).some(Boolean);
+    if (!anyChecked) {
+      issues.push("Check at least one material before logging this shipment.");
+      return issues;
+    }
+    materials.forEach((m, idx) => {
+      if (!checked[idx]) return;
+      const invItem = inventory.find((i) => i.id === m.inventoryId);
+      const available = invItem ? invItem.quantity : 0;
+      const qty = sendQty[idx];
+      if (qty === undefined || qty === "" || Number(qty) <= 0) {
+        issues.push(m.name + ": enter a quantity to send.");
+      } else if (Number(qty) > available) {
+        issues.push(m.name + ": only " + available + " in stock, can't send " + qty + ".");
+      }
+    });
+    return issues;
+  }
+
   async function save() {
     if (!form.programId || !form.facilitator.trim()) return;
+    if (sendValidationIssues().length > 0) return;
     const materials = (selectedProgram?.materials || [])
-      .map((m, idx) => (checked[idx] ? { inventoryId: m.inventoryId, name: m.name, qty: Number(sendQty[idx] ?? m.qtyRequired) || 0 } : null))
+      .map((m, idx) => (checked[idx] ? { inventoryId: m.inventoryId, name: m.name, qty: Number(sendQty[idx]) || 0 } : null))
       .filter(Boolean);
     const record = { id: genId(), ...form, programName: selectedProgram?.name || "", materials, updatedAt: new Date().toISOString() };
     await persist([record, ...transit]);
@@ -598,6 +799,26 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
     setReturningId(rec.id);
   }
   function cancelReturn() { setReturningId(null); setReturnQuality({}); }
+
+  async function deleteShipment(rec) {
+    await persist(transit.filter((t) => t.id !== rec.id));
+    if (rec.materials?.length && !rec.actualReturnDate) {
+      await adjustInventory(rec.materials, 1);
+    }
+    if (rec.materials?.length && rec.programId) {
+      const nextPrograms = programs.map((p) => {
+        if (p.id !== rec.programId) return p;
+        const updatedMaterials = (p.materials || []).map((pm) => {
+          const sent = rec.materials.find((mm) => mm.inventoryId === pm.inventoryId);
+          return sent ? { ...pm, qtySent: Math.max(0, (pm.qtySent || 0) - sent.qty) } : pm;
+        });
+        return { ...p, materials: updatedMaterials };
+      });
+      await persistPrograms(nextPrograms);
+    }
+    pushLog("Deleted shipment", (rec.programName || "Shipment") + " to " + rec.facilitator + " deleted by " + user);
+    setPendingDeleteShipment(null);
+  }
 
   async function confirmReturn(rec) {
     const materialsWithQuality = (rec.materials || []).map((m, idx) => ({ ...m, returnedQuality: returnQuality[idx] }));
@@ -644,6 +865,7 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
             </Field>
             <Field label="Facilitator"><input value={form.facilitator} onChange={(e) => setForm({ ...form, facilitator: e.target.value })} placeholder="Who's receiving it" /></Field>
             <Field label="Packed by"><input value={form.packedBy} onChange={(e) => setForm({ ...form, packedBy: e.target.value })} /></Field>
+            <Field label="Pack by"><input type="date" value={form.packByDate} onChange={(e) => setForm({ ...form, packByDate: e.target.value })} /></Field>
             <Field label="Sent date"><input type="date" value={form.sentDate} onChange={(e) => setForm({ ...form, sentDate: e.target.value })} /></Field>
             <Field label="Expected return"><input type="date" value={form.expectedReturnDate} onChange={(e) => setForm({ ...form, expectedReturnDate: e.target.value })} /></Field>
           </div>
@@ -655,29 +877,41 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
               ) : (
                 selectedProgram.materials.map((m, idx) => {
                   const invItem = inventory.find((i) => i.id === m.inventoryId);
+                  const available = invItem ? invItem.quantity : 0;
+                  const overStock = checked[idx] && Number(sendQty[idx]) > available;
                   return (
                     <div key={idx} className="check-row" style={{ justifyContent: "space-between" }}>
                       <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <input type="checkbox" checked={!!checked[idx]} onChange={(e) => setChecked({ ...checked, [idx]: e.target.checked })} />
-                        {m.name} <span className="td-muted">({invItem ? invItem.quantity : 0} in stock)</span>
+                        {m.name} <span className="td-muted">{available} in stock</span>
                       </label>
                       <input
                         className="inline-num"
                         type="number"
                         placeholder="Qty"
-                        value={sendQty[idx] ?? m.qtyRequired}
+                        value={sendQty[idx] ?? ""}
                         onChange={(e) => setSendQty({ ...sendQty, [idx]: e.target.value })}
                         disabled={!checked[idx]}
+                        style={overStock ? { borderColor: "var(--warning)", color: "var(--warning)" } : undefined}
                       />
                     </div>
                   );
                 })
               )}
+              {sendValidationIssues().map((issue, i) => (
+                <p key={i} className="td-muted" style={{ color: "var(--warning)" }}>{issue}</p>
+              ))}
             </div>
           )}
           <div className="form-actions">
             <button className="btn btn-ghost" onClick={() => setForm(null)}><X size={14} /> Cancel</button>
-            <button className="btn btn-primary" onClick={save}><Check size={14} /> Log shipment</button>
+            <button
+              className="btn btn-primary"
+              disabled={sendValidationIssues().length > 0}
+              onClick={save}
+            >
+              <Check size={14} /> Log shipment
+            </button>
           </div>
         </div>
       )}
@@ -686,7 +920,7 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
         <EmptyState text="No shipments logged yet." />
       ) : (
         <table className="table">
-          <thead><tr><th>Program</th><th>Facilitator</th><th>Packed by</th><th>Sent</th><th>Expected return</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Program</th><th>Facilitator</th><th>Packed by</th><th>Pack by</th><th>Sent</th><th>Expected return</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {transit.map((t) => {
               const status = transitStatus(t);
@@ -698,24 +932,33 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
                     <td className="td-strong">{t.programName}</td>
                     <td>{t.facilitator}</td>
                     <td>{t.packedBy}</td>
+                    <td>{fmtDate(t.packByDate)}</td>
                     <td>{fmtDate(t.sentDate)}</td>
                     <td>{fmtDate(t.expectedReturnDate)}</td>
                     <td><Pill text={status} color={TRANSIT_STATUS_COLOR[status]} /></td>
                     <td className="td-actions" onClick={(e) => e.stopPropagation()}>
                       {status !== "Returned" && !isReturning && <button className="btn btn-ghost btn-sm" onClick={() => startReturn(t)}>Mark returned</button>}
                       {status !== "Returned" && isReturning && <button className="btn btn-ghost btn-sm" onClick={cancelReturn}>Cancel</button>}
+                      {pendingDeleteShipment === t.id ? (
+                        <>
+                          <button className="btn btn-ghost btn-sm" onClick={() => setPendingDeleteShipment(null)}>Cancel</button>
+                          <button className="btn btn-primary btn-sm" style={{ background: "var(--warning)" }} onClick={() => deleteShipment(t)}>Delete</button>
+                        </>
+                      ) : (
+                        <button className="icon-btn" onClick={() => setPendingDeleteShipment(t.id)}><Trash2 size={14} /></button>
+                      )}
                     </td>
                   </tr>
                   {!isReturning && isExpanded && (
                     <tr>
-                      <td colSpan={7} className="return-panel">
+                      <td colSpan={8} className="return-panel">
                         <div className="return-panel-inner">
                           <div className="prog-sub-head" style={{ marginTop: 0 }}>Materials in this shipment</div>
                           {(t.materials || []).length === 0 ? (
                             <p className="td-muted">No materials were logged on this shipment — it was likely sent before any items were checked off in the form.</p>
                           ) : (
                             t.materials.map((m, idx) => (
-                              <div key={idx} className="shipment-row">
+                              <div key={idx} className="shipment-row" style={{ padding: "4px 0" }}>
                                 <span>{m.name}</span>
                                 <span className="td-muted">qty {m.qty}{m.returnedQuality ? " · returned " + m.returnedQuality : ""}</span>
                               </div>
@@ -730,7 +973,7 @@ function TransitTab({ transit, programs, inventory, persist, persistPrograms, pe
                   )}
                   {isReturning && (
                     <tr>
-                      <td colSpan={7} className="return-panel">
+                      <td colSpan={8} className="return-panel">
                         <div className="return-panel-inner">
                           <div className="prog-sub-head" style={{ marginTop: 0 }}>Condition of returned materials (required)</div>
                           {(t.materials || []).length === 0 ? (
@@ -812,6 +1055,7 @@ function CalendarTab({ programs, transit }) {
     const ev = [];
     programs.forEach((p) => p.date && ev.push({ date: p.date, title: p.name, type: "Program", description: (p.location || ""), attachment: p.attachment }));
     transit.forEach((t) => t.expectedReturnDate && !t.actualReturnDate && ev.push({ date: t.expectedReturnDate, title: t.programName + " — return due", type: "Return", description: "From " + t.facilitator }));
+    transit.forEach((t) => t.packByDate && !t.sentDate && ev.push({ date: t.packByDate, title: t.programName + " — pack by", type: "Pack", description: "For " + t.facilitator }));
     return ev;
   }, [programs, transit]);
 
@@ -857,7 +1101,7 @@ function CalendarTab({ programs, transit }) {
                 <div key={i} className={"cal-cell" + (isToday ? " cal-cell-today" : "")}>
                   <div className="cal-daynum">{d}</div>
                   {dayEvents.slice(0, 2).map((e, idx) => (
-                    <div key={idx} className={"cal-event" + (e.type === "Return" ? " cal-event-return" : "")}>{e.title}</div>
+                    <div key={idx} className={"cal-event" + (e.type === "Return" ? " cal-event-return" : "") + (e.type === "Pack" ? " cal-event-pack" : "")}>{e.title}</div>
                   ))}
                 </div>
               );
@@ -985,8 +1229,7 @@ function GlobalStyle() {
       .prog-sub-head { font-size: 12px; font-weight: 600; color: var(--muted); margin: 14px 0 6px; }
       .inline-form { display: flex; gap: 8px; align-items: center; }
       .inline-form select { flex: 1; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; }
-      .shipment-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-      .shipment-row:last-child { border-bottom: none; }
+      .shipment-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
       .check-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; padding: 4px 0; }
       .return-panel { background: #FBF8F3; border-bottom: 1px solid var(--border); padding: 0 !important; }
       .return-panel-inner { padding: 14px 18px; }
@@ -1016,6 +1259,11 @@ function GlobalStyle() {
       .cal-daynum { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
       .cal-event { background: #eaf1ee; color: var(--success); border-radius: 4px; padding: 1px 4px; margin-bottom: 2px; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .cal-event-return { background: #fbe9e4; color: var(--warning); }
+      .cal-event-pack { background: #eef2fb; color: #2F6FA6; }
+      .shipment-block { padding: 8px 0; border-bottom: 1px solid var(--border); }
+      .shipment-block:last-child { border-bottom: none; }
+      .shipment-materials { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+      .shipment-chip { background: #F1EEE7; border-radius: 6px; padding: 2px 8px; font-size: 12px; color: var(--text); }
       .cal-upcoming { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
       .upcoming-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
       .upcoming-row:last-child { border-bottom: none; }
